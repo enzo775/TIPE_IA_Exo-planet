@@ -3,7 +3,7 @@ import math
 import random
 
 def generate_sample(n_points=10):
-    aligned = random.random() < 0.5
+    aligned = random.random() < 0.25
     data = []
 
     if aligned:
@@ -257,9 +257,9 @@ for _ in range(2000):
 print("Précision :", correct / 2000)
 
 # Exemple clair
-while 1:
-    state, _ = generate_sample()
+while True:
+    state, label_ = generate_sample()
     agent.forward(state, training=False)
-    print(_==1)
+    print(label==True)
     print("Probabilité aligné :", agent.predict_probability())
     input()
