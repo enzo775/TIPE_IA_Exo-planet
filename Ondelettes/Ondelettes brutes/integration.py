@@ -1,8 +1,10 @@
 import math
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+from math import pi
 from fractions import Fraction
 from typing import Callable
-import numpy as np
-
 
 class Function:
     def __init__(self, f: Callable[[float], float]):
@@ -143,7 +145,7 @@ class Fourier(Function):
         self.N = N
         self.n = n
 
-    def at(self, nu: float) -> complex:
+    def at1(self, nu: float) -> complex:
         """
         Retourne F(ν) = ∫ f(t) exp(-2πi ν t) dt  pour une fréquence ν donnée.
         """
@@ -153,6 +155,14 @@ class Fourier(Function):
         re = Integral(f_re, self.T_min, self.T_max, self.N, self.n).eval_int()
         im = Integral(f_im, self.T_min, self.T_max, self.N, self.n).eval_int()
         return re +1j*im
+    
+    def at2(self, nu: float) -> complex:
+        """
+        Retourne F(ν) = ∫ f(t) exp(-2πi ν t) dt  pour une fréquence ν donnée.
+        """
+        F = lambda t: self.f(t) * np.exp(2j * math.pi * nu * t)
+
+        return Integral(F, self.T_min, self.T_max, self.N, self.n).eval_int()
 
     def spectrum(self, nu_min: float, nu_max: float,
                  n_freqs: int = 200) -> tuple[list[float], list[complex]]:
@@ -161,13 +171,41 @@ class Fourier(Function):
         Retourne (freqs, values).
         """
         freqs  = [nu_min + k * (nu_max - nu_min) / (n_freqs - 1) for k in range(n_freqs)]
-        values = [self.at(nu) for nu in freqs]
+        values = [self.at1(nu) for nu in freqs]
         return freqs, values
     
     def module(self, nu_min: float, nu_max: float,
                  n_freqs: int = 200) -> tuple[list[float], list[float]]:
-        return map(np.abs(), self.spectrum(nu_min, nu_max, n_freqs))
+        freq, values = self.spectrum(nu_min, nu_max, n_freqs)
+        module = []
+        for z in values:
+            module.append(math.sqrt(z.real**2 + z.imag**2))
+        return freq, module
     
     def argument(self, nu_min: float, nu_max: float,
                  n_freqs: int = 200) -> tuple[list[float], list[float]]:
-        return map(np.angle(), self.spectrum(nu_min, nu_max, n_freqs))
+        freq, values = self.spectrum(nu_min, nu_max, n_freqs)
+        phase = []
+        for z in values:
+            phase.append(np.angle(z))
+        return freq, phase
+
+# test
+def f(x):
+    return 10*math.cos(2*pi*20*x) + 5*math.cos(2*pi*40*x + pi/2) + 2*math.cos(2*pi*61*x - pi)
+
+ft = Fourier(f, -1, 1, 500, 1)
+t0 = time.time()
+freqs, mag = ft.module(0, 100, 1000)
+tf = time.time() - t0
+print("Le calcul à pris %.2f s" % tf)
+
+
+plt.figure(figsize=(10, 5))
+plt.plot(freqs, mag)
+plt.title("Module de la transformée de Fourier")
+plt.xlabel("Fréquence (Hz)")
+plt.ylabel("Amplitude")
+plt.xlim(0, 100)
+plt.grid(True)
+plt.show()

@@ -1,2 +1,5 @@
-# TIPE_IA_Exo-planet
-For now, the goal is to find as many uselfull content/code example as possible for the real project.
+# TIPE_Wavelets
+Our goal:
+- Implement a working script for theoretical wavelets
+- Then try compressing an image with cosine transform or wavelet.
+- Compare algorithmic and energy cost. 
