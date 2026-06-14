@@ -1,4 +1,6 @@
 from __future__ import annotations
+from importer_image import charger_image
+
 
 import math
 import io
@@ -13,7 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 
-class BaseOndelette:
+class BaseOndeletteCouleur:
     
     h: np.ndarray
     g: np.ndarray
@@ -93,28 +95,28 @@ class BaseOndelette:
     def forward(self):
         img = self.img
         res = img.copy()
-        n, p = len(img), len(img[0])
-
-        for _ in range(self.levels):
-            res[:n,:p] = self.transformation_2d(res[:n, :p])
-            n //= 2
-            p //= 2
+        n1, p1 = len(img), len(img[0])
+        for i in range(3):
+            n, p = n1, p1
+            for _ in range(self.levels):
+                res[:n,:p, i] = self.transformation_2d(res[:n, :p, i])
+                n //= 2
+                p //= 2
 
         return res
     
     def inverse(self, coeffs, upscale=1):
-        n, p = len(coeffs), len(coeffs[0])
-        res = np.zeros((upscale*n, upscale*p))
-        #res = np.random.randint(0,5,(upscale*n, upscale*p))
-        res[:n,:p] = coeffs 
+        n1, p1 = len(coeffs), len(coeffs[0])
+        res = np.zeros((upscale*n1, upscale*p1, 3))
+        res[:n1,:p1, :] = coeffs
+        for i in range(3):
+            n = n1 // ( 2**(self.levels - 1) )
+            p = p1 // ( 2**(self.levels - 1) )
 
-        n //= 2**(self.levels - 1)
-        p //= 2**(self.levels - 1) #  ARRRGFGDJGDHFDFDHJJDNYFUHGOIEUYJDFGHO7IDFBHU
-
-        for _ in range(self.levels + upscale - 1):
-            res[:n, :p] = self.transformation_2d_inverse(res[:n, :p])
-            n *= 2
-            p *= 2
+            for _ in range(self.levels + upscale - 1):
+                res[:n, :p, i] = self.transformation_2d_inverse(res[:n, :p, i])
+                n *= 2
+                p *= 2
         return res
     
     @staticmethod
@@ -164,6 +166,12 @@ class BaseOndelette:
 
         else:
             raise ValueError(f"Mode inconnu : {mode!r}. Choisir 'dur', 'doux' ou 'exp'.")
+        
+    def psnr(self, rec):
+        """Peak Signal-to-Noise Ratio en dB. > 40 dB : excellent. < 30 dB : visible."""
+        orig = self.img
+        mse = float(np.mean((orig.astype(float) - rec.astype(float)) ** 2))
+        return float("inf") if mse == 0 else 10 * math.log10(255.0 ** 2 / mse)
 
     def afficher(
         self,
@@ -173,7 +181,7 @@ class BaseOndelette:
     ) -> None:
         pass
     
-class Haar(BaseOndelette):
+class Haar(BaseOndeletteCouleur):
     def __init__(self, img, levels):
         super().__init__(img, levels)
         s2 = np.sqrt(2)
@@ -212,8 +220,135 @@ def ycc_to_rgb(ycc_array):
 
     return rgb_array
 
-def plot_histogram_coeffs(img, bins=1000,bol=False):
+def comparer_seuils(wavelet, seuil):
+    coeffs = wavelet.forward()
+    
+    coeffs1 = wavelet.seuillage(coeffs, seuil, mode="dur")
+    coeffs2= wavelet.seuillage(coeffs, seuil, mode="doux")
+    coeffs3 = wavelet.seuillage(coeffs, seuil, mode="exp")
+
+    reconstructed1 = wavelet.inverse(coeffs1)
+    reconstructed1 = BaseOndeletteCouleur.clip_uint8(reconstructed1)
+
+    reconstructed2 = wavelet.inverse(coeffs2)
+    reconstructed2 = BaseOndeletteCouleur.clip_uint8(reconstructed2)
+
+    reconstructed3 = wavelet.inverse(coeffs3)
+    reconstructed3 = BaseOndeletteCouleur.clip_uint8(reconstructed3)
+
+    coeffs = BaseOndeletteCouleur.clip_uint8(coeffs)
+
+    # Affichage Matplotlib
+    plt.figure(figsize=(15, 5))
+
+    plt.subplot(1, 3, 1)
+    plt.imshow(reconstructed1, cmap='gray')
+    plt.title("Seuillage dur")
+    plt.axis('off')
+
+    plt.subplot(1, 3, 2)
+    plt.imshow(reconstructed2, cmap='gray')
+    plt.title("Seuillage doux")
+    plt.axis('off')
+
+    plt.subplot(1, 3, 3)
+    plt.imshow(reconstructed3, cmap='gray')
+    plt.title("Seuillage exp")
+    plt.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+
+def graphe_seuils(wavelet, min, max, n, mode_seuillage):
+    # Compression (Forward)
+    coeffs = wavelet.forward()
+    step = (max - min) // n
+    seuils = list(range(min, max, step))
+    psnr = []
+    tau = []
+    for seuil in seuils:
+        tau.append(100*wavelet.taux_compression(coeffs, seuil))
+        coeffs_courant = wavelet.seuillage(coeffs, seuil, mode=mode_seuillage)
+        r = wavelet.inverse(coeffs_courant)
+        r = BaseOndeletteCouleur.clip_uint8(r)
+        psnr.append(wavelet.psnr(r))
+
+    # Création de la figure avec 3 sous-graphiques
+    plt.figure(figsize=(15, 5))
+
+    # Premier sous-graphe : tau en fonction du seuil
+    plt.subplot(1, 3, 1)
+    plt.plot(seuils, tau, marker='o')
+    plt.xlabel("Seuil")
+    plt.ylabel("Taux de compression (%)")
+    plt.title("Taux de compression en fonction du seuil")
+    plt.grid(True)
+
+    # Deuxième sous-graphe : PSNR en fonction du seuil
+    plt.subplot(1, 3, 2)
+    plt.plot(seuils, psnr, marker='o')
+    plt.axhline(y=30, color='r', linestyle='--', label='Qualité excellente')
+    plt.xlabel("Seuil")
+    plt.ylabel("PSNR (dB)")
+    plt.title("PSNR en fonction du seuil")
+    plt.grid(True)
+    plt.legend()
+
+    # Troisième sous-graphe : PSNR en fonction de tau
+    plt.subplot(1, 3, 3)
+    plt.plot(tau, psnr, marker='o')
+    plt.axhline(y=30, color='r', linestyle='--', label='Qualité excellente')
+    plt.xlabel("Taux de compression (%)")
+    plt.ylabel("PSNR (dB)")
+    plt.title("PSNR en fonction du taux de compression")
+    plt.grid(True)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+def show(wavelet, seuil, mode_seuillage):
+    # Compression (Forward)
+    coeffs = wavelet.forward()
+
+    tau = 100*wavelet.taux_compression(coeffs, seuil)
+    print("Image compressée à %.2f %%" % (tau))
+    
+    coeffs = wavelet.seuillage(coeffs, seuil, mode=mode_seuillage)
+
+    r = wavelet.inverse(coeffs)
+    r = BaseOndeletteCouleur.clip_uint8(r)
+
+    coeffs = BaseOndeletteCouleur.clip_uint8(coeffs)
+
+    # 3. Affichage Matplotlib
+    plt.figure(figsize=(15, 5))
+
+    # Image Originale
+    plt.subplot(1, 3, 1)
+    plt.imshow(img_np, cmap='gray')
+    plt.title("Originale")
+    plt.axis('off')
+
+    # Image des coefficients (on utilise log pour mieux voir les détails)
+    plt.subplot(1, 3, 2)
+    plt.imshow(np.abs(coeffs), cmap='gray', vmax=np.percentile(np.abs(coeffs), 95))
+    plt.title(f"Coefficients Haar ({levels} niveaux)")
+    plt.axis('off')
+
+    # Image Reconstruite
+    plt.subplot(1, 3, 3)
+    plt.imshow(r, cmap='gray')
+    plt.title("Décompressée (Inverse)")
+    plt.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+
+def distribution_coeffs(wavelet, echelle_log=False):
+    img = wavelet.forward()
     data = img.ravel()
+    bins= len(data)//50
 
     vmin = data.min()
     vmax = data.max()
@@ -223,7 +358,7 @@ def plot_histogram_coeffs(img, bins=1000,bol=False):
         data,
         bins=bins,
         range=(vmin, vmax),
-        log=bol
+        log=echelle_log
     )
 
     plt.xlabel("Valeur du coefficient")
@@ -236,96 +371,29 @@ def plot_histogram_coeffs(img, bins=1000,bol=False):
 
     plt.show()
 
+
 if __name__ == "__main__":
-    image = "maison.jpg"
+    image = "lena.png"
     try:
         # Charge en niveaux de gris et redimensionne en puissance de 2 pour Haar
-        img_raw = Image.open(image).convert("RGB") # "L" pour n&b
+        img_raw = charger_image(image, gray=False) # "L" pour n&b
         img_np = np.array(img_raw, dtype=np.uint8)
-        im = rgb_to_ycc(img_np)
-        r = im[:,:,0]
-        g = im[:,:,1]
-        b = im[:,:,2]
+        img = rgb_to_ycc(img_np)
 
     except FileNotFoundError:
         print("Fichier lenna.jpg non trouvé, génération d'un pattern de test.")
-        img_np = (np.indices((512, 512)).sum(axis=0) % 255)
+        img_np = (np.indices((512, 512,3)).sum(axis=0) % 255)
 
     # 2. Traitement
-    levels = 4
-    #wavelet = Haar(img_np, levels)
+    levels = 2
+    wavelet = Haar(img_np, levels)
 
-    w1 = Haar(r, levels)
-    w2 = Haar(g, levels)
-    w3 = Haar(b, levels)
-    print("a")
-    # Compression (Forward)
-    #coeffs = wavelet.forward()
-
-    upscale = 1
+    coeffs = wavelet.forward()
     m = "dur"
-    seuil = 300
+    seuil = 200
 
-    c1 = w1.forward()
-    c1 = w1.seuillage(c1, seuil/4, mode=m)
-
-    c2 = w2.forward()
-    c2 = w1.seuillage(c2, seuil, mode=m)
-
-    c3 = w3.forward()
-    c3 = w1.seuillage(c3, seuil, mode=m)
-
-    n = len(c1)
-    #c1[n//2 :, n//2: ] = 0
-    #c1[: n//2, n//2: ] = 0 
-    #c1[n//2 :, : n//2] = 0
-    #c2[n//2 :, n//2: ] = 0
-    #c2[: n//2, n//2: ] = 0 
-    #c2[n//2 :, : n//2] = 0
-    #c3[n//2 :, n//2: ] = 0
-    #c3[: n//2, n//2: ] = 0 
-    #c3[n//2 :, : n//2] = 0
-
-
-    coeffs = np.stack((c1,c2,c3), axis=-1)
-    print(BaseOndelette.taux_compression(coeffs=coeffs, seuil=seuil))
-    print("b")
-    #plot_histogram_coeffs(coeffs,bol=True)
-    # Décompression (Inverse)
-    #reconstructed = wavelet.inverse(coeffs)
-    
-    r1 = w1.inverse(c1, upscale)
-
-    r2 = w2.inverse(c2, upscale)
-    
-    r3 = w3.inverse(c3, upscale)
-
-    reconstructed = np.stack((r1,r2,r3), axis=-1)
-    coeffs = BaseOndelette.clip_uint8(coeffs)
-
-    # 3. Affichage Matplotlib
-    plt.figure(figsize=(15, 5))
-
-    # Image Originale
-    plt.subplot(1, 3, 1)
-    #plt.imshow(img_np, cmap='gray')
-    plt.imshow(img_np)
-    plt.title("Originale")
-    plt.axis('off')
-
-    # Image des coefficients (on utilise log pour mieux voir les détails)
-    plt.subplot(1, 3, 2)
-    #plt.imshow(np.abs(coeffs), cmap='gray', vmax=np.percentile(np.abs(coeffs), 95))
-    plt.imshow(np.abs(coeffs), vmax=np.percentile(np.abs(coeffs), 95))
-    plt.title(f"Coefficients Haar ({levels} niveaux)")
-    plt.axis('off')
-
-    # Image Reconstruite
-    plt.subplot(1, 3, 3)
-    #plt.imshow(reconstructed, cmap='gray')
-    plt.imshow(ycc_to_rgb(reconstructed))
-    plt.title("Décompressée (Inverse)")
-    plt.axis('off')
-
-    plt.tight_layout()
-    plt.show()
+    coeffs = wavelet.forward()
+    #graphe_seuils(wavelet, 5, 200, 30, 'dur')
+    #comparer_seuils(wavelet, 100)
+    #show(wavelet, 35, "dur")
+    distribution_coeffs(wavelet, echelle_log=True)

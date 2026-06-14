@@ -1,4 +1,5 @@
 from __future__ import annotations
+from importer_image import charger_image
 
 import math
 import io
@@ -203,6 +204,12 @@ class BaseOndelette:
         """
         n_zeros = np.sum(np.abs(coeffs) < seuil)   # bug corrigé : abs()
         return n_zeros / coeffs.size               # .size plus propre que n*p
+    
+    def psnr(self, rec):
+        """Peak Signal-to-Noise Ratio en dB. > 40 dB : excellent. < 30 dB : visible."""
+        orig = self.img
+        mse = float(np.mean((orig.astype(float) - rec.astype(float)) ** 2))
+        return float("inf") if mse == 0 else 10 * math.log10(255.0 ** 2 / mse)
 
     def afficher(
         self,
@@ -223,44 +230,14 @@ class Haar(BaseOndelette):
 
 ##### CODE TEST
 
-def rgb_to_ycc(rgb_array):
-    R = rgb_array[:, :, 0].astype(float)
-    G = rgb_array[:, :, 1].astype(float)
-    B = rgb_array[:, :, 2].astype(float)
-
-    Y = 0.299 * R + 0.587 * G + 0.114 * B
-    Cr = 128 + 0.5 * R - 0.4187 * G - 0.0813 * B
-    Cb = 128 - 0.1687 * R - 0.3313 * G + 0.5 * B
-
-    ycc_array = np.stack((Y, Cr, Cb), axis=-1)
-    return ycc_array
-
-if __name__ == "__main__":
-    image = "lena.png"
-    try:
-        # Charge en niveaux de gris et redimensionne en puissance de 2 pour Haar
-        img_raw = Image.open(image).convert("L") # "L" pour n&b
-        img_np = np.array(img_raw, dtype=np.uint8)
-        
-    except FileNotFoundError:
-        print("Fichier lenna.jpg non trouvé, génération d'un pattern de test.")
-        img_np = (np.indices((512, 512)).sum(axis=0) % 255)
-
-    # 2. Traitement
-    levels = 2
-    wavelet = Haar(img_np, levels)
-
-    # Compression (Forward)
+def comparer_seuils(wavelet, seuil):
     coeffs = wavelet.forward()
-    seuil = 100
-    print(100*wavelet.taux_compression(coeffs, seuil))
+    
     coeffs1 = wavelet.seuillage(coeffs, seuil, mode="dur")
     coeffs2= wavelet.seuillage(coeffs, seuil, mode="doux")
     coeffs3 = wavelet.seuillage(coeffs, seuil, mode="exp")
 
-    # Décompression (Inverse)
     reconstructed1 = wavelet.inverse(coeffs1)
-    #reconstructed1 = wavelet.upscale2(reconstructed1)
     reconstructed1 = BaseOndelette.clip_uint8(reconstructed1)
 
     reconstructed2 = wavelet.inverse(coeffs2)
@@ -271,29 +248,155 @@ if __name__ == "__main__":
 
     coeffs = BaseOndelette.clip_uint8(coeffs)
 
+    # Affichage Matplotlib
+    plt.figure(figsize=(15, 5))
+
+    plt.subplot(1, 3, 1)
+    plt.imshow(reconstructed1, cmap='gray')
+    plt.title("Seuillage dur")
+    plt.axis('off')
+
+    plt.subplot(1, 3, 2)
+    plt.imshow(reconstructed2, cmap='gray')
+    plt.title("Seuillage doux")
+    plt.axis('off')
+
+    plt.subplot(1, 3, 3)
+    plt.imshow(reconstructed3, cmap='gray')
+    plt.title("Seuillage exp")
+    plt.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+
+def graphe_seuils(wavelet, min, max, n, mode_seuillage):
+    # Compression (Forward)
+    coeffs = wavelet.forward()
+    step = (max - min) // n
+    seuils = list(range(min, max, step))
+    psnr = []
+    tau = []
+    for seuil in seuils:
+        tau.append(100*wavelet.taux_compression(coeffs, seuil))
+        coeffs_courant = wavelet.seuillage(coeffs, seuil, mode=mode_seuillage)
+        r = wavelet.inverse(coeffs_courant)
+        r = BaseOndelette.clip_uint8(r)
+        psnr.append(wavelet.psnr(r))
+
+    # Création de la figure avec 3 sous-graphiques
+    plt.figure(figsize=(15, 5))
+
+    # Premier sous-graphe : tau en fonction du seuil
+    plt.subplot(1, 3, 1)
+    plt.plot(seuils, tau, marker='o')
+    plt.xlabel("Seuil")
+    plt.ylabel("Taux de compression (%)")
+    plt.title("Taux de compression en fonction du seuil")
+    plt.grid(True)
+
+    # Deuxième sous-graphe : PSNR en fonction du seuil
+    plt.subplot(1, 3, 2)
+    plt.plot(seuils, psnr, marker='o')
+    plt.axhline(y=30, color='r', linestyle='--', label='Qualité excellente')
+    plt.xlabel("Seuil")
+    plt.ylabel("PSNR (dB)")
+    plt.title("PSNR en fonction du seuil")
+    plt.grid(True)
+    plt.legend()
+
+    # Troisième sous-graphe : PSNR en fonction de tau
+    plt.subplot(1, 3, 3)
+    plt.plot(tau, psnr, marker='o')
+    plt.axhline(y=30, color='r', linestyle='--', label='Qualité excellente')
+    plt.xlabel("Taux de compression (%)")
+    plt.ylabel("PSNR (dB)")
+    plt.title("PSNR en fonction du taux de compression")
+    plt.grid(True)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+def show(wavelet, seuil, mode_seuillage):
+    # Compression (Forward)
+    coeffs = wavelet.forward()
+
+    tau = 100*wavelet.taux_compression(coeffs, seuil)
+    print("Image compressée à %.2f %%" % (tau))
+    
+    coeffs = wavelet.seuillage(coeffs, seuil, mode=mode_seuillage)
+
+    r = wavelet.inverse(coeffs)
+    r = BaseOndelette.clip_uint8(r)
+
+    coeffs = BaseOndelette.clip_uint8(coeffs)
+
     # 3. Affichage Matplotlib
     plt.figure(figsize=(15, 5))
 
     # Image Originale
     plt.subplot(1, 3, 1)
-    #plt.imshow(img_np, cmap='gray')
-    plt.imshow(reconstructed1, cmap='gray')
+    plt.imshow(img_np, cmap='gray')
     plt.title("Originale")
     plt.axis('off')
 
     # Image des coefficients (on utilise log pour mieux voir les détails)
     plt.subplot(1, 3, 2)
-    #plt.imshow(np.abs(coeffs), cmap='gray', vmax=np.percentile(np.abs(coeffs), 95))
-    plt.imshow(reconstructed2, cmap='gray')
+    plt.imshow(np.abs(coeffs), cmap='gray', vmax=np.percentile(np.abs(coeffs), 95))
     plt.title(f"Coefficients Haar ({levels} niveaux)")
     plt.axis('off')
 
     # Image Reconstruite
     plt.subplot(1, 3, 3)
-    plt.imshow(reconstructed3, cmap='gray')
-    #plt.imshow(reconstructed1, cmap='gray')
+    plt.imshow(r, cmap='gray')
     plt.title("Décompressée (Inverse)")
     plt.axis('off')
 
     plt.tight_layout()
     plt.show()
+
+def distribution_coeffs(wavelet, echelle_log=False):
+    img = wavelet.forward()
+    data = img.ravel()
+    bins= len(data)//50
+
+    vmin = data.min()
+    vmax = data.max()
+
+    plt.figure(figsize=(10,5))
+    plt.hist(
+        data,
+        bins=bins,
+        range=(vmin, vmax),
+        log=echelle_log
+    )
+
+    plt.xlabel("Valeur du coefficient")
+    plt.ylabel("Occurrences")
+    plt.title(
+        f"Distribution des coefficients\n"
+        f"min={vmin:.2f}, max={vmax:.2f}"
+    )
+    plt.grid(alpha=0.3)
+
+    plt.show()
+
+if __name__ == "__main__":
+    image = "lena.png"
+    try:
+        # Charge en niveaux de gris et redimensionne en puissance de 2 pour Haar
+        img_raw = charger_image(image, gray=True) # "L" pour n&b
+        img_np = np.array(img_raw, dtype=np.uint8)
+        
+    except FileNotFoundError:
+        print("Fichier %s non trouvé, génération d'un pattern de test." % image)
+        img_np = (np.indices((512, 512)).sum(axis=0) % 255)
+
+    # 2. Traitement
+    levels = 3
+    wavelet = Haar(img_np, levels)
+    graphe_seuils(wavelet, 1, 200, 30, 'doux')
+    #comparer_seuils(wavelet, 100)
+    #show(wavelet, 200, "doux")
+    #distribution_coeffs(wavelet, echelle_log=True)
+    
