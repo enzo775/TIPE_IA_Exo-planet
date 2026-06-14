@@ -119,8 +119,7 @@ class BaseOndeletteCouleur:
                 p *= 2
         return res
     
-    @staticmethod
-    def taux_compression(coeffs, seuil, canal="RGB"):
+    def taux_compression(self, coeffs, seuil, canal="RGB"):
         """
         Proportion de coefficients mis à zéro après seuillage.
         """
@@ -128,16 +127,16 @@ class BaseOndeletteCouleur:
         #return n_zeros / coeffs.size
         n, p, _ = coeffs.shape
 
-        ll_h = n // (2 ** (5 - 1))
-        ll_w = p // (2 ** (5 - 1))
+        ll_h = n // (2 ** (self.levels - 1))
+        ll_w = p // (2 ** (self.levels - 1))
 
         # seuil par canal
         thresholds = np.full(coeffs.shape, seuil, dtype=float)
 
         if canal.upper() == "YCC":
-            thresholds[:, :, 0] = seuil / 3
-            thresholds[:, :, 1] = 3*seuil
-            thresholds[:, :, 2] = 3*seuil
+            thresholds[:, :, 0] = seuil / 2
+            thresholds[:, :, 1] = 2*seuil
+            thresholds[:, :, 2] = 2*seuil
 
 
         # masque : seuls les détails peuvent être annulés
@@ -162,16 +161,16 @@ class BaseOndeletteCouleur:
                         n_zeros += 1
         return n_zeros / (len(coeffs)*len(coeffs[0])*3)
     
-    @staticmethod
     def seuillage(
+        self,
         coeffs: np.ndarray,
         seuil: float,
         mode: str = "dur",
         canal: str = "RGB"
     ) -> np.ndarray:
         n, p, _ = coeffs.shape
-        ll_h = n // (2**(5 - 1))
-        ll_w = p // (2**(5 - 1))
+        ll_h = n // (2**(self.levels - 1))
+        ll_w = p // (2**(self.levels - 1))
         mask = np.ones_like(coeffs, dtype=bool)
 
         mask[:ll_h, :ll_w, :] = False
@@ -181,9 +180,9 @@ class BaseOndeletteCouleur:
 
         thresholds = np.full(coeffs.shape, seuil)
         if canal.upper() == "YCC":
-            thresholds[:, :, 0] = seuil / 3
-            thresholds[:, :, 1] = 3*seuil
-            thresholds[:, :, 2] = 3*seuil
+            thresholds[:, :, 0] = seuil / 1.5
+            thresholds[:, :, 1] = 1.5*seuil
+            thresholds[:, :, 2] = 1.5*seuil
 
         if mode == "dur":
             #return np.where(abs_c >= seuil, c, 0.0)
@@ -249,6 +248,35 @@ class Haar(BaseOndeletteCouleur):
         # Coefficients orthogonaux (indispensables pour l'inverse) + energie wtf ??
         self.h = np.array([ 1/s2,  1/s2])
         self.g = np.array([ 1/s2, -1/s2])
+
+class Daubechies(BaseOndeletteCouleur):
+    """
+    Daubechies 4 coefficients (db2).
+
+    Support compact de longueur 4.
+    Beaucoup moins d'artefacts carrés que Haar.
+    """
+
+    def __init__(self, img, levels):
+        super().__init__(img, levels)
+
+        sqrt3 = np.sqrt(3)
+        denom = 4 * np.sqrt(2)
+
+        self.h = np.array([
+            (1 + sqrt3) / denom,
+            (3 + sqrt3) / denom,
+            (3 - sqrt3) / denom,
+            (1 - sqrt3) / denom,
+        ])
+
+        # filtre passe-haut quadrature miroir
+        self.g = np.array([
+            self.h[3],
+            -self.h[2],
+            self.h[1],
+            -self.h[0]
+        ])
 
 
 ##### CODE TEST
@@ -348,7 +376,9 @@ def graphe_seuils(wavelet, min, max, n, mode_seuillage):
     # Deuxième sous-graphe : PSNR en fonction du seuil
     plt.subplot(1, 3, 2)
     plt.plot(seuils, psnr, marker='o')
-    plt.axhline(y=30, color='r', linestyle='--', label='Qualité excellente')
+    plt.axhline(y=40, color='g', linestyle='--', label='Excellente')
+    plt.axhline(y=35, color='y', linestyle='--', label='Imperceptible')
+    plt.axhline(y=30, color='r', linestyle='--', label='Visible')
     plt.xlabel("Seuil")
     plt.ylabel("PSNR (dB)")
     plt.title("PSNR en fonction du seuil")
@@ -358,7 +388,9 @@ def graphe_seuils(wavelet, min, max, n, mode_seuillage):
     # Troisième sous-graphe : PSNR en fonction de tau
     plt.subplot(1, 3, 3)
     plt.plot(tau, psnr, marker='o')
-    plt.axhline(y=30, color='r', linestyle='--', label='Qualité excellente')
+    plt.axhline(y=40, color='g', linestyle='--', label='Excellente')
+    plt.axhline(y=35, color='y', linestyle='--', label='Imperceptible')
+    plt.axhline(y=30, color='r', linestyle='--', label='Visible')
     plt.xlabel("Taux de compression (%)")
     plt.ylabel("PSNR (dB)")
     plt.title("PSNR en fonction du taux de compression")
@@ -432,9 +464,13 @@ def distribution_coeffs(wavelet, echelle_log=False):
 
     plt.show()
 
-def rgb_vs_ycc(img, levels, seuil, mode_seuillage):
-    w1 = Haar(img, levels)
-    w2 = Haar(rgb_to_ycc(img), levels)
+def rgb_vs_ycc(img, levels, seuil=10, mode_seuillage="dur", ondelette="HAAR"):
+    if ondelette.upper() == "HAAR":
+        w1 = Haar(img, levels)
+        w2 = Haar(rgb_to_ycc(img), levels)
+    elif ondelette.upper() == "DAUBECHIES":
+        w1 = Daubechies(img, levels)
+        w2 = Daubechies(rgb_to_ycc(img), levels)
 
     c1 = w1.forward()
     c2 = w2.forward()
@@ -443,10 +479,10 @@ def rgb_vs_ycc(img, levels, seuil, mode_seuillage):
     c1 = w1.seuillage(c1, seuil, mode=mode_seuillage, canal="RGB") 
     c2 = w2.seuillage(c2, seuil, mode=mode_seuillage, canal="YCC")
 
-    r1 = wavelet.inverse(c1)
+    r1 = w1.inverse(c1)
     r1 = BaseOndeletteCouleur.clip_uint8(r1)
     
-    r2 = wavelet.inverse(c2)
+    r2 = w2.inverse(c2)
     r2 = BaseOndeletteCouleur.clip_uint8(ycc_to_rgb(r2))
 
     # 3. Affichage Matplotlib
@@ -472,9 +508,8 @@ def rgb_vs_ycc(img, levels, seuil, mode_seuillage):
     plt.show()
 
 if __name__ == "__main__":
-    image = "lena.png"
+    image = "barbara.jpg"
     try:
-        # Charge en niveaux de gris
         img_raw = charger_image(image, gray=False) # "L" pour n&b
         img_np = np.array(img_raw, dtype=np.uint8)
         # img_np = rgb_to_ycc(img_np)
@@ -484,16 +519,14 @@ if __name__ == "__main__":
         img_np = (np.indices((512, 512, 3)).sum(axis=0) % 255)
 
     # 2. Traitement
-    levels = 5
-    wavelet = Haar(img_np, levels)
+    levels = 3
+    #wavelet = Daubechies(img_np, levels)
 
-    coeffs = wavelet.forward()
-    m = "doux"
-    seuil = 70
+    m = "dur"
+    seuil = 35
 
-    coeffs = wavelet.forward()
     #graphe_seuils(wavelet, 5, 200, 30, 'dur')
     #comparer_seuils(wavelet, seuil)
     #show(wavelet, seuil, m)
     #distribution_coeffs(wavelet, echelle_log=True)
-    rgb_vs_ycc(img_np, levels, seuil, m)
+    rgb_vs_ycc(img_np, levels, seuil, m, "DAUBECHIES")

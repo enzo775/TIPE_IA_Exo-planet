@@ -1,5 +1,8 @@
 # TIPE_Wavelets
+What we've done:
+    - Implement a working script object oriented for wavelets to zip an Image
+    - Haar and Daubechies
+    - 1st glance at the beamer
 Our goal:
-- Implement a working script for theoretical wavelets
-- Then try compressing an image with cosine transform or wavelet.
-- Compare algorithmic and energy cost. 
+    - Make the script less functional for the interfaces
+    - Go towards upscaling

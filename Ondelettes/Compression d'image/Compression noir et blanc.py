@@ -189,7 +189,7 @@ class BaseOndelette:
             # Transition continue : f(seuil) = 0, f(+inf) -> |c| - seuil
             # Paramètre alpha : contrôle la rapidité de la transition
             # alpha grand -> proche du seuillage dur ; alpha petit -> proche du doux
-            alpha = 0.1
+            alpha = 1
             excess = np.maximum(abs_c - seuil, 0.0)         # 0 en dessous du seuil
             enveloppe = excess * (1.0 - np.exp(-alpha * excess))
             return np.sign(c) * enveloppe
@@ -297,7 +297,9 @@ def graphe_seuils(wavelet, min, max, n, mode_seuillage):
     # Deuxième sous-graphe : PSNR en fonction du seuil
     plt.subplot(1, 3, 2)
     plt.plot(seuils, psnr, marker='o')
-    plt.axhline(y=30, color='r', linestyle='--', label='Qualité excellente')
+    plt.axhline(y=40, color='g', linestyle='--', label='Excellente')
+    plt.axhline(y=35, color='y', linestyle='--', label='Imperceptible')
+    plt.axhline(y=30, color='r', linestyle='--', label='Visible')
     plt.xlabel("Seuil")
     plt.ylabel("PSNR (dB)")
     plt.title("PSNR en fonction du seuil")
@@ -307,7 +309,9 @@ def graphe_seuils(wavelet, min, max, n, mode_seuillage):
     # Troisième sous-graphe : PSNR en fonction de tau
     plt.subplot(1, 3, 3)
     plt.plot(tau, psnr, marker='o')
-    plt.axhline(y=30, color='r', linestyle='--', label='Qualité excellente')
+    plt.axhline(y=40, color='g', linestyle='--', label='Excellente')
+    plt.axhline(y=35, color='y', linestyle='--', label='Imperceptible')
+    plt.axhline(y=30, color='r', linestyle='--', label='Visible')
     plt.xlabel("Taux de compression (%)")
     plt.ylabel("PSNR (dB)")
     plt.title("PSNR en fonction du taux de compression")
@@ -382,7 +386,7 @@ def distribution_coeffs(wavelet, echelle_log=False):
     plt.show()
 
 if __name__ == "__main__":
-    image = "lena.png"
+    image = "barbara.jpg"
     try:
         # Charge en niveaux de gris et redimensionne en puissance de 2 pour Haar
         img_raw = charger_image(image, gray=True) # "L" pour n&b
@@ -395,8 +399,8 @@ if __name__ == "__main__":
     # 2. Traitement
     levels = 3
     wavelet = Haar(img_np, levels)
-    graphe_seuils(wavelet, 1, 200, 30, 'doux')
-    #comparer_seuils(wavelet, 100)
+    graphe_seuils(wavelet, 5, 200, 30, 'doux')
+    #comparer_seuils(wavelet, 60)
     #show(wavelet, 200, "doux")
     #distribution_coeffs(wavelet, echelle_log=True)
     
