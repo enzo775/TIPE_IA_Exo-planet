@@ -102,24 +102,41 @@ class BaseOndelette:
 
         return res
     
-    def inverse(self, coeffs):
+    def inverse(self, coeffs, upscale=1):
         n, p = len(coeffs), len(coeffs[0])
-        n //= 2**(self.levels - 1)
-        p //= 2**(self.levels - 1) # ARRRGFGDJGDHFDFDHJJDNYFUHGOIEUYJDFGHO7IDFBHU
+        res = np.zeros((upscale*n, upscale*p))
+        #res = np.random.randint(0,5,(upscale*n, upscale*p))
+        res[:n,:p] = coeffs 
 
-        res = coeffs.copy()
-        for _ in range(self.levels):
+        n //= 2**(self.levels - 1)
+        p //= 2**(self.levels - 1) #  ARRRGFGDJGDHFDFDHJJDNYFUHGOIEUYJDFGHO7IDFBHU
+
+        for _ in range(self.levels + upscale - 1):
             res[:n, :p] = self.transformation_2d_inverse(res[:n, :p])
             n *= 2
             p *= 2
         return res
     
-    def taux_compression(self, coeffs, seuil):
+    @staticmethod
+    def taux_compression(coeffs, seuil):
         """
         Proportion de coefficients mis à zéro après seuillage.
         """
-        naze = np.sum(np.abs(coeffs) < seuil)
-        return naze / coeffs.size
+        n_zeros = np.sum(np.abs(coeffs) < seuil)   # bug corrigé : abs()
+        return n_zeros / coeffs.size
+    
+    @staticmethod
+    def taux_compression_maison(coeffs, seuil):
+        """
+        Proportion de coefficients mis à zéro après seuillage.
+        """
+        n_zeros = 0   # bug corrigé : abs()
+        for i in range(len(coeffs)):
+            for j in range(len(coeffs[0])):
+                for k in range(3):
+                    if np.abs(coeffs[i,j,k]) < seuil:
+                        n_zeros += 1
+        return n_zeros / (len(coeffs)*len(coeffs[0])*3)
     
     @staticmethod
     def seuillage(
@@ -127,22 +144,26 @@ class BaseOndelette:
         seuil: float,
         mode: str = "dur",
     ) -> np.ndarray:
-        """
-        Seuillage des coefficients ondelettes.
+        c = coeffs.copy()
+        abs_c = np.abs(c)
 
-        Paramètres
-        ----------
-        coeffs : tableau de coefficients (sortie de forward)
-        seuil  : valeur de seuil λ ≥ 0
-        mode   : "dur"  → met à 0 si |c| < λ, garde sinon
-                 "doux" → met à 0 si |c| < λ, réduit vers 0 sinon
-                          (c → sign(c) * (|c| - λ))
+        if mode == "dur":
+            return np.where(abs_c >= seuil, c, 0.0)
 
-        Retourne ?
-        --------
-        Tableau de coefficients seuillés (même forme que coeffs).
-        """
-        pass
+        elif mode == "doux":
+            return np.sign(c) * np.maximum(abs_c - seuil, 0.0)
+
+        elif mode == "exp":
+            # Transition continue : f(seuil) = 0, f(+inf) -> |c| - seuil
+            # Paramètre alpha : contrôle la rapidité de la transition
+            # alpha grand -> proche du seuillage dur ; alpha petit -> proche du doux
+            alpha = 10
+            excess = np.maximum(abs_c - seuil, 0.0)         # 0 en dessous du seuil
+            enveloppe = excess * (1.0 - np.exp(-alpha * excess))
+            return np.sign(c) * enveloppe
+
+        else:
+            raise ValueError(f"Mode inconnu : {mode!r}. Choisir 'dur', 'doux' ou 'exp'.")
 
     def afficher(
         self,
@@ -175,22 +196,63 @@ def rgb_to_ycc(rgb_array):
     ycc_array = np.stack((Y, Cr, Cb), axis=-1)
     return ycc_array
 
+def ycc_to_rgb(ycc_array):
+    Y  = ycc_array[:, :, 0].astype(float)
+    Cr = ycc_array[:, :, 1].astype(float)
+    Cb = ycc_array[:, :, 2].astype(float)
+
+    R = Y + 1.402 * (Cr - 128)
+    G = Y - 0.714136 * (Cr - 128) - 0.344136 * (Cb - 128)
+    B = Y + 1.772 * (Cb - 128)
+
+    rgb_array = np.stack((R, G, B), axis=-1)
+
+    # retour dans l'intervalle valide
+    rgb_array = np.clip(rgb_array, 0, 255).astype(np.uint8)
+
+    return rgb_array
+
+def plot_histogram_coeffs(img, bins=1000,bol=False):
+    data = img.ravel()
+
+    vmin = data.min()
+    vmax = data.max()
+
+    plt.figure(figsize=(10,5))
+    plt.hist(
+        data,
+        bins=bins,
+        range=(vmin, vmax),
+        log=bol
+    )
+
+    plt.xlabel("Valeur du coefficient")
+    plt.ylabel("Occurrences")
+    plt.title(
+        f"Distribution des coefficients\n"
+        f"min={vmin:.2f}, max={vmax:.2f}"
+    )
+    plt.grid(alpha=0.3)
+
+    plt.show()
+
 if __name__ == "__main__":
-    image = "rose.jpg"
+    image = "maison.jpg"
     try:
         # Charge en niveaux de gris et redimensionne en puissance de 2 pour Haar
         img_raw = Image.open(image).convert("RGB") # "L" pour n&b
         img_np = np.array(img_raw, dtype=np.uint8)
-        r = img_np[:,:,0]
-        g = img_np[:,:,1]
-        b = img_np[:,:,2]
+        im = rgb_to_ycc(img_np)
+        r = im[:,:,0]
+        g = im[:,:,1]
+        b = im[:,:,2]
 
     except FileNotFoundError:
         print("Fichier lenna.jpg non trouvé, génération d'un pattern de test.")
         img_np = (np.indices((512, 512)).sum(axis=0) % 255)
 
     # 2. Traitement
-    levels = 3
+    levels = 4
     #wavelet = Haar(img_np, levels)
 
     w1 = Haar(r, levels)
@@ -200,29 +262,45 @@ if __name__ == "__main__":
     # Compression (Forward)
     #coeffs = wavelet.forward()
 
+    upscale = 1
+    m = "dur"
+    seuil = 300
+
     c1 = w1.forward()
+    c1 = w1.seuillage(c1, seuil/4, mode=m)
+
     c2 = w2.forward()
+    c2 = w1.seuillage(c2, seuil, mode=m)
+
     c3 = w3.forward()
+    c3 = w1.seuillage(c3, seuil, mode=m)
+
     n = len(c1)
-    c1[n//2 :, n//2: ] = 0
-    c1[: n//2, n//2: ] = 0 
-    c1[n//2 :, : n//2] = 0
-    c2[n//2 :, n//2: ] = 0
-    c2[: n//2, n//2: ] = 0 
-    c2[n//2 :, : n//2] = 0
-    c3[n//2 :, n//2: ] = 0
-    c3[: n//2, n//2: ] = 0 
-    c3[n//2 :, : n//2] = 0
+    #c1[n//2 :, n//2: ] = 0
+    #c1[: n//2, n//2: ] = 0 
+    #c1[n//2 :, : n//2] = 0
+    #c2[n//2 :, n//2: ] = 0
+    #c2[: n//2, n//2: ] = 0 
+    #c2[n//2 :, : n//2] = 0
+    #c3[n//2 :, n//2: ] = 0
+    #c3[: n//2, n//2: ] = 0 
+    #c3[n//2 :, : n//2] = 0
+
+
     coeffs = np.stack((c1,c2,c3), axis=-1)
+    print(BaseOndelette.taux_compression(coeffs=coeffs, seuil=seuil))
     print("b")
+    #plot_histogram_coeffs(coeffs,bol=True)
     # Décompression (Inverse)
     #reconstructed = wavelet.inverse(coeffs)
+    
+    r1 = w1.inverse(c1, upscale)
 
-    r1 = w1.inverse(c1)
-    r2 = w2.inverse(c2)
-    r3 = w3.inverse(c3)
+    r2 = w2.inverse(c2, upscale)
+    
+    r3 = w3.inverse(c3, upscale)
+
     reconstructed = np.stack((r1,r2,r3), axis=-1)
-    reconstructed = BaseOndelette.clip_uint8(reconstructed)
     coeffs = BaseOndelette.clip_uint8(coeffs)
 
     # 3. Affichage Matplotlib
@@ -245,7 +323,7 @@ if __name__ == "__main__":
     # Image Reconstruite
     plt.subplot(1, 3, 3)
     #plt.imshow(reconstructed, cmap='gray')
-    plt.imshow(reconstructed)
+    plt.imshow(ycc_to_rgb(reconstructed))
     plt.title("Décompressée (Inverse)")
     plt.axis('off')
 

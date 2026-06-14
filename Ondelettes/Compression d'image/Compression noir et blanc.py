@@ -89,7 +89,7 @@ class BaseOndelette:
             out[i, :] = self.transformation_1d_inverse(out[i, :])
         
         return out
-    
+
     def forward(self):
         img = self.img
         res = img.copy()
@@ -101,48 +101,108 @@ class BaseOndelette:
             p //= 2
 
         return res
-    
-    def inverse(self, coeffs):
+   
+    def inverse(self, coeffs, upscale=1):
         n, p = len(coeffs), len(coeffs[0])
-        n //= 2**(self.levels - 1)
-        p //= 2**(self.levels - 1) #  ARRRGFGDJGDHFDFDHJJDNYFUHGOIEUYJDFGHO7IDFBHU
+        res = np.zeros((upscale*n, upscale*p))
+        res[:n,:p] = coeffs
 
-        res = coeffs.copy()
-        for _ in range(self.levels):
+        n //= 2**(self.levels - 1)
+        p //= 2**(self.levels - 1)
+
+        for _ in range(self.levels + upscale - 1):
             res[:n, :p] = self.transformation_2d_inverse(res[:n, :p])
             n *= 2
             p *= 2
         return res
     
-    def taux_compression(self, coeffs, seuil):
-        """
-        Proportion de coefficients mis à zéro après seuillage.
-        """
-        naze = np.sum(np.abs(coeffs) < seuil)
-        return naze / coeffs.size
+    def upscale(self):
+        img = self.img
+        n, p = len(img), len(img[0])
+        coeffs  = np.zeros((n*2, p*2))
+        est = np.zeros((n, p))
+        sud = np.zeros((n, p))
+        diag = np.zeros((n, p))
+        for i in range(1, n - 1):
+            for j in range(1, p - 1):
+                est[i][j] = (img[i][j+1] - img[i][j-1])/4
+                sud[i][j] = (img[i+1][j] - img[i-1][j])/4
+                diag[i][j] = (img[i+1][j+1] - img[i][j])/8
+        
+        coeffs[:n, :p] =  2*img
+        coeffs[:n, p:] =  0.6 * est
+        coeffs[n:, :p] =  0.6 * sud
+        coeffs[n:, p:] =  0.4 * diag
+        
     
+        res1 = self.inverse(coeffs, upscale=1)
+        res = np.zeros((n*2, p*2))
+        
+        for i in range(1, 2*n - 1):
+            for j in range(1, 2*p - 1):
+                res[i][j] = (res1[i][j] + res1[i][j+1] + res1[i+1][j] + res1[i+1][j+1] )/4
+
+        return res
+    
+    def upscale2(self, image) -> np.ndarray:
+        """
+        Upscale ×2 par projection dans l'espace V_{j+1}.
+
+        Principe (AMR) : l'image basse résolution appartient à V_j.
+        Sa projection dans V_{j+1} s'obtient en la plaçant dans le bloc
+        LL d'un buffer 2×2 fois plus grand (sous-bandes LH, HL, HH = 0)
+        et en appliquant une passe de DWT inverse.
+
+        Pour Haar : chaque pixel I[i,j] génère un bloc 2×2 de valeur
+        constante I[i,j]/2, ce qui est l'interpolation la plus régulière
+        compatible avec la norme L² et la structure d'échelle de Haar.
+        """
+        n, p = image.shape
+        buf = np.zeros((2 * n, 2 * p))
+        buf[:n, :p] = image     # image dans LL, hauts détails = 0
+
+        # On crée une instance temporaire avec la bonne taille pour accéder à t2d_inv
+        w_up = self.__class__(np.zeros((2 * n, 2 * p)), levels=1)
+        result = w_up.inverse(buf)
+
+        # Renormalisation : compense le facteur 1/2 introduit par Haar
+        # (optionnel selon si on veut conserver l'énergie ou les valeurs)
+        return result * 2.0
+        
     @staticmethod
     def seuillage(
         coeffs: np.ndarray,
         seuil: float,
         mode: str = "dur",
     ) -> np.ndarray:
-        """
-        Seuillage des coefficients ondelettes.
+        c = coeffs.copy()
+        abs_c = np.abs(c)
 
-        Paramètres
-        ----------
-        coeffs : tableau de coefficients (sortie de forward)
-        seuil  : valeur de seuil λ ≥ 0
-        mode   : "dur"  → met à 0 si |c| < λ, garde sinon
-                 "doux" → met à 0 si |c| < λ, réduit vers 0 sinon
-                          (c → sign(c) * (|c| - λ))
+        if mode == "dur":
+            return np.where(abs_c >= seuil, c, 0.0)
 
-        Retourne ?
-        --------
-        Tableau de coefficients seuillés (même forme que coeffs).
+        elif mode == "doux":
+            return np.sign(c) * np.maximum(abs_c - seuil, 0.0)
+
+        elif mode == "exp":
+            # Transition continue : f(seuil) = 0, f(+inf) -> |c| - seuil
+            # Paramètre alpha : contrôle la rapidité de la transition
+            # alpha grand -> proche du seuillage dur ; alpha petit -> proche du doux
+            alpha = 0.1
+            excess = np.maximum(abs_c - seuil, 0.0)         # 0 en dessous du seuil
+            enveloppe = excess * (1.0 - np.exp(-alpha * excess))
+            return np.sign(c) * enveloppe
+
+        else:
+            raise ValueError(f"Mode inconnu : {mode!r}. Choisir 'dur', 'doux' ou 'exp'.")
+
+
+    def taux_compression(self, coeffs: np.ndarray, seuil: float) -> float:
         """
-        pass
+        Proportion de coefficients qui seront mis à zéro après seuillage.
+        """
+        n_zeros = np.sum(np.abs(coeffs) < seuil)   # bug corrigé : abs()
+        return n_zeros / coeffs.size               # .size plus propre que n*p
 
     def afficher(
         self,
@@ -176,7 +236,7 @@ def rgb_to_ycc(rgb_array):
     return ycc_array
 
 if __name__ == "__main__":
-    image = "rose.jpg"
+    image = "lena.png"
     try:
         # Charge en niveaux de gris et redimensionne en puissance de 2 pour Haar
         img_raw = Image.open(image).convert("L") # "L" pour n&b
@@ -187,16 +247,28 @@ if __name__ == "__main__":
         img_np = (np.indices((512, 512)).sum(axis=0) % 255)
 
     # 2. Traitement
-    levels = 3
+    levels = 2
     wavelet = Haar(img_np, levels)
 
     # Compression (Forward)
     coeffs = wavelet.forward()
+    seuil = 100
+    print(100*wavelet.taux_compression(coeffs, seuil))
+    coeffs1 = wavelet.seuillage(coeffs, seuil, mode="dur")
+    coeffs2= wavelet.seuillage(coeffs, seuil, mode="doux")
+    coeffs3 = wavelet.seuillage(coeffs, seuil, mode="exp")
 
     # Décompression (Inverse)
-    reconstructed = wavelet.inverse(coeffs)
+    reconstructed1 = wavelet.inverse(coeffs1)
+    #reconstructed1 = wavelet.upscale2(reconstructed1)
+    reconstructed1 = BaseOndelette.clip_uint8(reconstructed1)
 
-    reconstructed = BaseOndelette.clip_uint8(reconstructed)
+    reconstructed2 = wavelet.inverse(coeffs2)
+    reconstructed2 = BaseOndelette.clip_uint8(reconstructed2)
+
+    reconstructed3 = wavelet.inverse(coeffs3)
+    reconstructed3 = BaseOndelette.clip_uint8(reconstructed3)
+
     coeffs = BaseOndelette.clip_uint8(coeffs)
 
     # 3. Affichage Matplotlib
@@ -204,19 +276,22 @@ if __name__ == "__main__":
 
     # Image Originale
     plt.subplot(1, 3, 1)
-    plt.imshow(img_np, cmap='gray')
+    #plt.imshow(img_np, cmap='gray')
+    plt.imshow(reconstructed1, cmap='gray')
     plt.title("Originale")
     plt.axis('off')
 
     # Image des coefficients (on utilise log pour mieux voir les détails)
     plt.subplot(1, 3, 2)
-    plt.imshow(np.abs(coeffs), cmap='gray', vmax=np.percentile(np.abs(coeffs), 95))
+    #plt.imshow(np.abs(coeffs), cmap='gray', vmax=np.percentile(np.abs(coeffs), 95))
+    plt.imshow(reconstructed2, cmap='gray')
     plt.title(f"Coefficients Haar ({levels} niveaux)")
     plt.axis('off')
 
     # Image Reconstruite
     plt.subplot(1, 3, 3)
-    plt.imshow(reconstructed, cmap='gray')
+    plt.imshow(reconstructed3, cmap='gray')
+    #plt.imshow(reconstructed1, cmap='gray')
     plt.title("Décompressée (Inverse)")
     plt.axis('off')
 

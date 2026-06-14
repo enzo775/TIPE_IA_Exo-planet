@@ -1,0 +1,6 @@
+\beamer@sectionintoc {1}{I. Au-delà de l'analyse de Fourier}{3}{0}{1}
+\beamer@sectionintoc {2}{II. Cadre mathématique}{6}{0}{2}
+\beamer@sectionintoc {3}{III. Analyse multi-résolution (AMR)}{9}{0}{3}
+\beamer@sectionintoc {4}{IV. Algorithmes et transformée discrète (DWT)}{12}{0}{4}
+\beamer@sectionintoc {5}{V. Application : compression d'image}{18}{0}{5}
+\beamer@sectionintoc {6}{VI. Conclusion}{22}{0}{6}
