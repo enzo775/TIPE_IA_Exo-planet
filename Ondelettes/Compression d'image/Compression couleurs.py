@@ -120,12 +120,34 @@ class BaseOndeletteCouleur:
         return res
     
     @staticmethod
-    def taux_compression(coeffs, seuil):
+    def taux_compression(coeffs, seuil, canal="RGB"):
         """
         Proportion de coefficients mis à zéro après seuillage.
         """
-        n_zeros = np.sum(np.abs(coeffs) < seuil)   # bug corrigé : abs()
-        return n_zeros / coeffs.size
+        #n_zeros = np.sum(np.abs(coeffs) < seuil)   # bug corrigé : abs()
+        #return n_zeros / coeffs.size
+        n, p, _ = coeffs.shape
+
+        ll_h = n // (2 ** (5 - 1))
+        ll_w = p // (2 ** (5 - 1))
+
+        # seuil par canal
+        thresholds = np.full(coeffs.shape, seuil, dtype=float)
+
+        if canal.upper() == "YCC":
+            thresholds[:, :, 0] = seuil / 3
+            thresholds[:, :, 1] = 3*seuil
+            thresholds[:, :, 2] = 3*seuil
+
+
+        # masque : seuls les détails peuvent être annulés
+        mask = np.ones(coeffs.shape, dtype=bool)
+        mask[:ll_h, :ll_w, :] = False
+
+        n_zeros = np.sum(mask & (np.abs(coeffs) < thresholds))
+        n_total = np.sum(mask)
+
+        return n_zeros / n_total
     
     @staticmethod
     def taux_compression_maison(coeffs, seuil):
@@ -145,24 +167,63 @@ class BaseOndeletteCouleur:
         coeffs: np.ndarray,
         seuil: float,
         mode: str = "dur",
+        canal: str = "RGB"
     ) -> np.ndarray:
+        n, p, _ = coeffs.shape
+        ll_h = n // (2**(5 - 1))
+        ll_w = p // (2**(5 - 1))
+        mask = np.ones_like(coeffs, dtype=bool)
+
+        mask[:ll_h, :ll_w, :] = False
+        
         c = coeffs.copy()
         abs_c = np.abs(c)
 
+        thresholds = np.full(coeffs.shape, seuil)
+        if canal.upper() == "YCC":
+            thresholds[:, :, 0] = seuil / 3
+            thresholds[:, :, 1] = 3*seuil
+            thresholds[:, :, 2] = 3*seuil
+
         if mode == "dur":
-            return np.where(abs_c >= seuil, c, 0.0)
+            #return np.where(abs_c >= seuil, c, 0.0)
+            out = c.copy()
+
+            to_zero = mask & (abs_c < thresholds)
+
+            out[to_zero] = 0.0
+
+            return out
 
         elif mode == "doux":
-            return np.sign(c) * np.maximum(abs_c - seuil, 0.0)
+            # return np.sign(c) * np.maximum(abs_c - seuil, 0.0)
+
+            out = np.sign(c) * np.maximum(abs_c - thresholds, 0.0)
+
+            # restauration exacte du LL
+            out[:ll_h, :ll_w, :] = c[:ll_h, :ll_w, :]
+
+            return out
 
         elif mode == "exp":
             # Transition continue : f(seuil) = 0, f(+inf) -> |c| - seuil
             # Paramètre alpha : contrôle la rapidité de la transition
             # alpha grand -> proche du seuillage dur ; alpha petit -> proche du doux
+            #alpha = 10
+            #excess = np.maximum(abs_c - seuil, 0.0)         # 0 en dessous du seuil
+            #enveloppe = excess * (1.0 - np.exp(-alpha * excess))
+            #return np.sign(c) * enveloppe
+
             alpha = 10
-            excess = np.maximum(abs_c - seuil, 0.0)         # 0 en dessous du seuil
-            enveloppe = excess * (1.0 - np.exp(-alpha * excess))
-            return np.sign(c) * enveloppe
+
+            excess = np.maximum(abs_c - thresholds, 0.0)
+
+            out = np.sign(c) * excess * (1 - np.exp(-alpha * excess))
+
+            # LL non seuillé
+            out[:ll_h, :ll_w, :] = c[:ll_h, :ll_w, :]
+
+            return out
 
         else:
             raise ValueError(f"Mode inconnu : {mode!r}. Choisir 'dur', 'doux' ou 'exp'.")
@@ -326,19 +387,19 @@ def show(wavelet, seuil, mode_seuillage):
 
     # Image Originale
     plt.subplot(1, 3, 1)
-    plt.imshow(img_np, cmap='gray')
+    plt.imshow(img_np)
     plt.title("Originale")
     plt.axis('off')
 
     # Image des coefficients (on utilise log pour mieux voir les détails)
     plt.subplot(1, 3, 2)
-    plt.imshow(np.abs(coeffs), cmap='gray', vmax=np.percentile(np.abs(coeffs), 95))
+    plt.imshow(np.abs(coeffs), vmax=np.percentile(np.abs(coeffs), 95))
     plt.title(f"Coefficients Haar ({levels} niveaux)")
     plt.axis('off')
 
     # Image Reconstruite
     plt.subplot(1, 3, 3)
-    plt.imshow(r, cmap='gray')
+    plt.imshow(r)
     plt.title("Décompressée (Inverse)")
     plt.axis('off')
 
@@ -371,29 +432,68 @@ def distribution_coeffs(wavelet, echelle_log=False):
 
     plt.show()
 
+def rgb_vs_ycc(img, levels, seuil, mode_seuillage):
+    w1 = Haar(img, levels)
+    w2 = Haar(rgb_to_ycc(img), levels)
+
+    c1 = w1.forward()
+    c2 = w2.forward()
+
+    t1, t2 = w1.taux_compression(c1, seuil, "RGB"), w1.taux_compression(c1, seuil, "YCC")
+    c1 = w1.seuillage(c1, seuil, mode=mode_seuillage, canal="RGB") 
+    c2 = w2.seuillage(c2, seuil, mode=mode_seuillage, canal="YCC")
+
+    r1 = wavelet.inverse(c1)
+    r1 = BaseOndeletteCouleur.clip_uint8(r1)
+    
+    r2 = wavelet.inverse(c2)
+    r2 = BaseOndeletteCouleur.clip_uint8(ycc_to_rgb(r2))
+
+    # 3. Affichage Matplotlib
+    plt.figure(figsize=(10, 5))
+
+    # Image Originale
+    plt.subplot(1, 2, 1)
+    plt.imshow(r1)
+    plt.title("RGB")
+    plt.axis('off')
+
+    # Image Reconstruite
+    plt.subplot(1, 2, 2)
+    plt.imshow(r2)
+    plt.title("YCC")
+    plt.axis('off')
+
+    # Texte sous chaque sous-graphe
+    plt.figtext(0.25, 0.05, f"Taux de compression : {t1:.3f}", ha='center', fontsize=12)
+    plt.figtext(0.75, 0.05, f"Taux de compression : {t2:.3f}", ha='center', fontsize=12)
+
+    plt.tight_layout(rect=[0, 0.1, 1, 1])
+    plt.show()
 
 if __name__ == "__main__":
     image = "lena.png"
     try:
-        # Charge en niveaux de gris et redimensionne en puissance de 2 pour Haar
+        # Charge en niveaux de gris
         img_raw = charger_image(image, gray=False) # "L" pour n&b
         img_np = np.array(img_raw, dtype=np.uint8)
-        img = rgb_to_ycc(img_np)
+        # img_np = rgb_to_ycc(img_np)
 
     except FileNotFoundError:
-        print("Fichier lenna.jpg non trouvé, génération d'un pattern de test.")
-        img_np = (np.indices((512, 512,3)).sum(axis=0) % 255)
+        print("Fichier %s non trouvé, génération d'un pattern de test." % (image))
+        img_np = (np.indices((512, 512, 3)).sum(axis=0) % 255)
 
     # 2. Traitement
-    levels = 2
+    levels = 5
     wavelet = Haar(img_np, levels)
 
     coeffs = wavelet.forward()
-    m = "dur"
-    seuil = 200
+    m = "doux"
+    seuil = 70
 
     coeffs = wavelet.forward()
     #graphe_seuils(wavelet, 5, 200, 30, 'dur')
-    #comparer_seuils(wavelet, 100)
-    #show(wavelet, 35, "dur")
-    distribution_coeffs(wavelet, echelle_log=True)
+    #comparer_seuils(wavelet, seuil)
+    #show(wavelet, seuil, m)
+    #distribution_coeffs(wavelet, echelle_log=True)
+    rgb_vs_ycc(img_np, levels, seuil, m)
