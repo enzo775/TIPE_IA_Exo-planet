@@ -269,6 +269,45 @@ def comparer_seuils(wavelet, seuil):
     plt.tight_layout()
     plt.show()
 
+def comparer_seuils_v2(wavelet, seuil, mode_seuillage="dur"):
+    coeffs = wavelet.forward()
+    
+    coeffs1 = wavelet.seuillage(coeffs, seuil[0], mode=mode_seuillage)
+    coeffs2= wavelet.seuillage(coeffs, seuil[1], mode=mode_seuillage)
+    coeffs3 = wavelet.seuillage(coeffs, seuil[2], mode=mode_seuillage)
+
+    reconstructed1 = wavelet.inverse(coeffs1)
+    reconstructed1 = BaseOndelette.clip_uint8(reconstructed1)
+
+    reconstructed2 = wavelet.inverse(coeffs2)
+    reconstructed2 = BaseOndelette.clip_uint8(reconstructed2)
+
+    reconstructed3 = wavelet.inverse(coeffs3)
+    reconstructed3 = BaseOndelette.clip_uint8(reconstructed3)
+
+    coeffs = BaseOndelette.clip_uint8(coeffs)
+
+    # Affichage Matplotlib
+    plt.figure(figsize=(15, 5))
+
+    plt.subplot(1, 3, 1)
+    plt.imshow(reconstructed1, cmap='gray')
+    plt.title("Seuillage 1")
+    plt.axis('off')
+
+    plt.subplot(1, 3, 2)
+    plt.imshow(reconstructed2, cmap='gray')
+    plt.title("Seuillage 2")
+    plt.axis('off')
+
+    plt.subplot(1, 3, 3)
+    plt.imshow(reconstructed3, cmap='gray')
+    plt.title("Seuillage 3")
+    plt.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+
 def graphe_seuils(wavelet, min, max, n, mode_seuillage):
     # Compression (Forward)
     coeffs = wavelet.forward()
@@ -386,7 +425,7 @@ def distribution_coeffs(wavelet, echelle_log=False):
     plt.show()
 
 if __name__ == "__main__":
-    image = "barbara.jpg"
+    image = "lena.png"
     try:
         # Charge en niveaux de gris et redimensionne en puissance de 2 pour Haar
         img_raw = charger_image(image, gray=True) # "L" pour n&b
@@ -399,8 +438,9 @@ if __name__ == "__main__":
     # 2. Traitement
     levels = 3
     wavelet = Haar(img_np, levels)
-    graphe_seuils(wavelet, 5, 200, 30, 'doux')
+    #graphe_seuils(wavelet, 5, 200, 30, 'doux')
     #comparer_seuils(wavelet, 60)
+    comparer_seuils_v2(wavelet, [0, 70, 150], "dur")
     #show(wavelet, 200, "doux")
     #distribution_coeffs(wavelet, echelle_log=True)
     

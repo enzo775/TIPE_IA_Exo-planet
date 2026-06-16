@@ -19,6 +19,8 @@ class BaseOndeletteCouleur:
     
     h: np.ndarray
     g: np.ndarray
+    h_synth : np.ndarray
+    g_synth : np.ndarray
 
     def __init__(self, img, levels):
         self.img = img.astype(float) # tableau np
@@ -64,7 +66,7 @@ class BaseOndeletteCouleur:
         for i in range(half):
             for k in range(L):
                 idx = (2*i + k) % n
-                out[idx] += approx[i] * self.h[k] + detail[i] * self.g[k]
+                out[idx] += approx[i] * self.h_synth[k] + detail[i] * self.g_synth[k]
 
         return out
     
@@ -242,46 +244,151 @@ class BaseOndeletteCouleur:
         pass
     
 class Haar(BaseOndeletteCouleur):
+
     def __init__(self, img, levels):
         super().__init__(img, levels)
+
         s2 = np.sqrt(2)
-        # Coefficients orthogonaux (indispensables pour l'inverse) + energie wtf ??
-        self.h = np.array([ 1/s2,  1/s2])
-        self.g = np.array([ 1/s2, -1/s2])
+
+        self.h = np.array([
+            1/s2,
+            1/s2
+        ])
+
+        self.g = np.array([
+            1/s2,
+           -1/s2
+        ])
+
+        # Haar orthogonale
+        self.h_synth = self.h.copy()
+        self.g_synth = self.g.copy()
 
 class Daubechies(BaseOndeletteCouleur):
-    """
-    Daubechies 4 coefficients (db2).
-
-    Support compact de longueur 4.
-    Beaucoup moins d'artefacts carrés que Haar.
-    """
 
     def __init__(self, img, levels):
         super().__init__(img, levels)
 
         sqrt3 = np.sqrt(3)
-        denom = 4 * np.sqrt(2)
+        denom = 4*np.sqrt(2)
+
+        h0 = (1 + sqrt3)/denom
+        h1 = (3 + sqrt3)/denom
+        h2 = (3 - sqrt3)/denom
+        h3 = (1 - sqrt3)/denom
+
+        # analyse
+        self.h = np.array([
+            h0,
+            h1,
+            h2,
+            h3
+        ])
+
+        self.g = np.array([
+            h3,
+           -h2,
+            h1,
+           -h0
+        ])
+
+        self.h_synth = self.h.copy()
+        self.g_synth = self.g.copy()
+
+class Daubechies3(BaseOndeletteCouleur):
+
+    def __init__(self, img, levels):
+        super().__init__(img, levels)
 
         self.h = np.array([
-            (1 + sqrt3) / denom,
-            (3 + sqrt3) / denom,
-            (3 - sqrt3) / denom,
-            (1 - sqrt3) / denom,
+            0.3326705529500826,
+            0.8068915093110928,
+            0.4598775021184915,
+           -0.1350110200102546,
+           -0.0854412738820267,
+            0.0352262918857095
         ])
 
-        # filtre passe-haut quadrature miroir
         self.g = np.array([
-            self.h[3],
-            -self.h[2],
-            self.h[1],
-            -self.h[0]
+            0.0352262918857095,
+            0.0854412738820267,
+           -0.1350110200102546,
+           -0.4598775021184915,
+            0.8068915093110928,
+           -0.3326705529500826
         ])
 
+        self.h_synth = self.h.copy()
+        self.g_synth = self.g.copy()
+
+class Daubechies4(BaseOndeletteCouleur):
+
+    def __init__(self, img, levels):
+        super().__init__(img, levels)
+
+        self.h = np.array([
+            0.2303778133088964,
+            0.7148465705529154,
+            0.6308807679298587,
+           -0.0279837694168599,
+           -0.1870348117188811,
+            0.0308413818355607,
+            0.0328830116668852,
+           -0.0105974017850690
+        ])
+
+        self.g = np.array([
+           -0.0105974017850690,
+           -0.0328830116668852,
+            0.0308413818355607,
+            0.1870348117188811,
+           -0.0279837694168599,
+           -0.6308807679298587,
+            0.7148465705529154,
+           -0.2303778133088964
+        ])
+
+        self.h_synth = self.h.copy()
+        self.g_synth = self.g.copy()
+
+class Daubechies5(BaseOndeletteCouleur):
+
+    def __init__(self, img, levels):
+        super().__init__(img, levels)
+
+        self.h = np.array([
+            0.1601023979741929,
+            0.6038292697971895,
+            0.7243085284377729,
+            0.1384281459013203,
+           -0.2422948870663823,
+           -0.0322448695850295,
+            0.0775714938400459,
+           -0.0062414902127983,
+           -0.0125807519990820,
+            0.0033357252854738
+        ])
+
+        self.g = np.array([
+            0.0033357252854738,
+            0.0125807519990820,
+           -0.0062414902127983,
+           -0.0775714938400459,
+           -0.0322448695850295,
+            0.2422948870663823,
+            0.1384281459013203,
+           -0.7243085284377729,
+            0.6038292697971895,
+           -0.1601023979741929
+        ])
+
+        self.h_synth = self.h.copy()
+        self.g_synth = self.g.copy()
 
 ##### CODE TEST
 
 def rgb_to_ycc(rgb_array):
+
     R = rgb_array[:, :, 0].astype(float)
     G = rgb_array[:, :, 1].astype(float)
     B = rgb_array[:, :, 2].astype(float)
@@ -367,7 +474,7 @@ def graphe_seuils(wavelet, min, max, n, mode_seuillage):
 
     # Premier sous-graphe : tau en fonction du seuil
     plt.subplot(1, 3, 1)
-    plt.plot(seuils, tau, marker='o')
+    plt.plot(seuils, tau, marker='.')
     plt.xlabel("Seuil")
     plt.ylabel("Taux de compression (%)")
     plt.title("Taux de compression en fonction du seuil")
@@ -375,7 +482,7 @@ def graphe_seuils(wavelet, min, max, n, mode_seuillage):
 
     # Deuxième sous-graphe : PSNR en fonction du seuil
     plt.subplot(1, 3, 2)
-    plt.plot(seuils, psnr, marker='o')
+    plt.plot(seuils, psnr, marker='.')
     plt.axhline(y=40, color='g', linestyle='--', label='Excellente')
     plt.axhline(y=35, color='y', linestyle='--', label='Imperceptible')
     plt.axhline(y=30, color='r', linestyle='--', label='Visible')
@@ -387,7 +494,7 @@ def graphe_seuils(wavelet, min, max, n, mode_seuillage):
 
     # Troisième sous-graphe : PSNR en fonction de tau
     plt.subplot(1, 3, 3)
-    plt.plot(tau, psnr, marker='o')
+    plt.plot(tau, psnr, marker='.')
     plt.axhline(y=40, color='g', linestyle='--', label='Excellente')
     plt.axhline(y=35, color='y', linestyle='--', label='Imperceptible')
     plt.axhline(y=30, color='r', linestyle='--', label='Visible')
@@ -457,9 +564,10 @@ def distribution_coeffs(wavelet, echelle_log=False):
     plt.xlabel("Valeur du coefficient")
     plt.ylabel("Occurrences")
     plt.title(
-        f"Distribution des coefficients\n"
-        f"min={vmin:.2f}, max={vmax:.2f}"
+        f"Distribution des coefficients"
     )
+    plt.axvline(x=-40, color='r', linestyle='--')
+    plt.axvline(x=40, color='r', linestyle='--')
     plt.grid(alpha=0.3)
 
     plt.show()
@@ -507,8 +615,82 @@ def rgb_vs_ycc(img, levels, seuil=10, mode_seuillage="dur", ondelette="HAAR"):
     plt.tight_layout(rect=[0, 0.1, 1, 1])
     plt.show()
 
+
+def labo(img, levels, mode_seuillage, min, max, n):
+    # Initialisation des wavelets
+    wavelets = {
+        "Haar": Haar(img, levels),
+        "Daubechies": Daubechies(img, levels),
+        "Daubechies3": Daubechies3(img, levels),
+        "Daubechies4": Daubechies4(img, levels),
+        "Daubechies5": Daubechies5(img, levels)
+    }
+
+    # Calcul des seuils
+    step = (max - min) // n
+    seuils = list(range(min, max, step))
+
+    # Dictionnaire pour stocker les résultats (tau et psnr pour chaque wavelet)
+    results = {name: {"tau": [], "psnr": []} for name in wavelets}
+
+    # Boucle sur chaque wavelet
+    for name, wavelet in wavelets.items():
+        coeffs = wavelet.forward()
+        for s in seuils:
+            tau = 100 * wavelet.taux_compression(coeffs, s)
+            coeffs_seuilles = wavelet.seuillage(coeffs, s, mode=mode_seuillage)
+            r = wavelet.inverse(coeffs_seuilles)
+            r = BaseOndeletteCouleur.clip_uint8(r)
+            psnr = wavelet.psnr(r)
+            results[name]["tau"].append(tau)
+            results[name]["psnr"].append(psnr)
+
+    # Création de la figure avec 3 sous-graphiques
+    plt.figure(figsize=(18, 5))
+
+    # --- 1. Tau en fonction du seuil ---
+    plt.subplot(1, 3, 1)
+    colors = ['blue', 'green', 'red', 'cyan', 'magenta']
+    for i, (name, data) in enumerate(results.items()):
+        plt.plot(seuils, data["tau"], marker='.', color=colors[i % len(colors)], label=name)
+    plt.xlabel("Seuil")
+    plt.ylabel("Taux de compression (%)")
+    plt.title("Taux de compression en fonction du seuil")
+    plt.grid(True)
+    plt.legend()
+
+    # --- 2. PSNR en fonction du seuil ---
+    plt.subplot(1, 3, 2)
+    for i, (name, data) in enumerate(results.items()):
+        plt.plot(seuils, data["psnr"], marker='.', color=colors[i % len(colors)], label=name)
+    plt.axhline(y=40, color='g', linestyle='--', label='Excellente')
+    plt.axhline(y=35, color='y', linestyle='--', label='Imperceptible')
+    plt.axhline(y=30, color='r', linestyle='--', label='Visible')
+    plt.xlabel("Seuil")
+    plt.ylabel("PSNR (dB)")
+    plt.title("PSNR en fonction du seuil")
+    plt.grid(True)
+    plt.legend()
+
+    # --- 3. PSNR en fonction de tau ---
+    plt.subplot(1, 3, 3)
+    for i, (name, data) in enumerate(results.items()):
+        plt.plot(data["tau"], data["psnr"], marker='.', color=colors[i % len(colors)], label=name)
+    plt.axhline(y=40, color='g', linestyle='--', label='Excellente')
+    plt.axhline(y=35, color='y', linestyle='--', label='Imperceptible')
+    plt.axhline(y=30, color='r', linestyle='--', label='Visible')
+    plt.xlabel("Taux de compression (%)")
+    plt.ylabel("PSNR (dB)")
+    plt.title("PSNR en fonction du taux de compression")
+    plt.grid(True)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
 if __name__ == "__main__":
-    image = "barbara.jpg"
+    image = "pernette.jpg"
     try:
         img_raw = charger_image(image, gray=False) # "L" pour n&b
         img_np = np.array(img_raw, dtype=np.uint8)
@@ -520,13 +702,14 @@ if __name__ == "__main__":
 
     # 2. Traitement
     levels = 3
-    #wavelet = Daubechies(img_np, levels)
-
+    wavelet = Haar(img_np, levels)
+    
     m = "dur"
     seuil = 35
 
-    #graphe_seuils(wavelet, 5, 200, 30, 'dur')
+    #graphe_seuils(wavelet, 5, 150, 40, 'dur')
     #comparer_seuils(wavelet, seuil)
-    #show(wavelet, seuil, m)
+    show(wavelet, seuil, m)
     #distribution_coeffs(wavelet, echelle_log=True)
-    rgb_vs_ycc(img_np, levels, seuil, m, "DAUBECHIES")
+    #rgb_vs_ycc(img_np, levels, seuil, m, "HAAR")
+    #labo(img_np, levels, m, 5, 150, 30)
